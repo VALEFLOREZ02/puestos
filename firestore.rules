@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function admin() { return request.auth != null && request.auth.token.email == 'TU_CORREO@gmail.com'; }
+    // Público: solo lectura del estado de los puestos
+    match /publico/{doc} { allow read: if true; allow write: if admin(); }
+    // Todo lo demás (compradores, pagos, ajustes): solo el administrador
+    match /{document=**} { allow read, write: if admin(); }
+  }
+}

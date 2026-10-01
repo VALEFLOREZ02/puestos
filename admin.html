@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8"><title>Administración</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--bg:#f7f7f4;--card:#fff;--tx:#1d1d1b;--mut:#6b6b66;--bd:#dcdcd5;--free:#e8eee9;--freeb:#9bb5a2;--pend:#f6d98a;--paid:#3f9b64;--ac:#2b4c7e}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1a1a18;--card:#252522;--tx:#eee;--mut:#9a9a94;--bd:#3a3a36;--free:#2c3a30;--freeb:#56705c;--pend:#8a6d1c;--paid:#2f8254;--ac:#7aa2dc}}
+:root[data-theme="dark"]{--bg:#1a1a18;--card:#252522;--tx:#eee;--mut:#9a9a94;--bd:#3a3a36;--free:#2c3a30;--freeb:#56705c;--pend:#8a6d1c;--paid:#2f8254;--ac:#7aa2dc}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,sans-serif}
+.w{max-width:980px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:4px 0}h2{font-size:17px;margin:16px 0 8px}
+.mut{color:var(--mut);font-size:13px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin:10px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(54px,1fr));gap:6px}
+.p{border:1px solid var(--freeb);background:var(--free);border-radius:8px;padding:10px 0;text-align:center;font-weight:600;color:var(--tx);cursor:default}
+.p.pend{background:var(--pend);border-color:#c9a232}.p.paid{background:var(--paid);border-color:var(--paid);color:#fff}
+.adm .p{cursor:pointer}.p.sel{outline:3px solid var(--ac)}
+.leg{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin:8px 0}.leg i{display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:-2px;margin-right:4px;border:1px solid var(--bd)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+button,input,select{font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx)}
+button{cursor:pointer}button.pri{background:var(--ac);color:#fff;border-color:var(--ac)}button.on{background:var(--ac);color:#fff}
+button.dng{color:#c0392b}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}.row>*{flex:1 1 140px}
+.sc{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--bd);white-space:nowrap}
+.kp{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.kp div{background:var(--bg);border-radius:8px;padding:10px}.kp b{display:block;font-size:20px}
+.tag{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--pend);color:#000}.tag.ok{background:var(--paid);color:#fff}
+</style></head><body><div class="w" id="app">Cargando…</div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script>firebase.initializeApp(firebaseConfig);</script>
+<script>
+const $=s=>document.querySelector(s);
+const esc=t=>String(t??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const money=n=>"$"+Math.round(n||0).toLocaleString("es-CO");
+const today=()=>new Date().toISOString().slice(0,10);
+const PUB={total:100,statuses:{}};
+const db=firebase.firestore();let isAdmin=true;
+let cfg={total:PUB.total,price:50000,title:PUB.title,sellers:[]},rows={},sel=null,tab="puestos",view="public";
+const METHODS=["Efectivo a vendedor","Efectivo en banco","Transferencia"];
+
+// ---------- estado ----------
+const paidOf=r=>(r?.payments||[]).reduce((s,p)=>s+Number(p.amount||0),0);
+const priceOf=r=>Number(r?.price??cfg.price);
+function status(n){const r=rows[n];if(!r||!r.buyer)return"free";return paidOf(r)>=priceOf(r)?"paid":"pend";}
+function pubStatus(n){return PUB.statuses[n]||"free";}
+const label={free:"Disponible",pend:"Ocupado – sin pagar completo",paid:"Ocupado – pagado"};
+
+function gridHTML(getS,clickable){let h='<div class="grid">';
+ for(let n=1;n<=cfg.total;n++){const s=getS(n);h+=`<div class="p ${s==="free"?"":s} ${sel===n?"sel":""}" ${clickable?`data-n="${n}"`:""} title="${label[s]}">${n}</div>`;}
+ return h+"</div>";}
+const legend='<div class="leg"><span><i style="background:var(--free)"></i>Disponible</span><span><i style="background:var(--pend)"></i>Ocupado sin pagar</span><span><i style="background:var(--paid)"></i>Ocupado y pagado</span></div>';
+
+// ---------- render ----------
+function render(){
+ if(view==="admin"&&isAdmin)return renderAdmin();
+ const c={free:0,pend:0,paid:0};for(let n=1;n<=PUB.total;n++)c[pubStatus(n)]++;
+ $("#app").innerHTML=`<h1>${esc(PUB.title)}</h1>
+ <div class="mut">Actualizado: ${esc(PUB.updated||"—")}</div>${legend}
+ <div class="card">${(()=>{let h='<div class="grid">';for(let n=1;n<=PUB.total;n++){const s=pubStatus(n);h+=`<div class="p ${s==="free"?"":s}" title="${label[s]}">${n}</div>`;}return h+"</div>";})()}</div>
+ <div class="kp"><div><b>${c.free}</b>Disponibles</div><div><b>${c.pend}</b>Ocupados sin pagar</div><div><b>${c.paid}</b>Ocupados y pagados</div></div>
+ ${isAdmin?'<p><button class="pri" id="goAdmin">Ir a administración</button></p>':""}`;
+ $("#goAdmin")?.addEventListener("click",()=>{view="admin";render();});
+}
+
+function totals(){let exp=0,got=0,by={},bySeller={},n=0;
+ for(const r of Object.values(rows)){if(!r.buyer)continue;n++;exp+=priceOf(r);
+  for(const p of r.payments||[]){const a=Number(p.amount||0);got+=a;by[p.method]=(by[p.method]||0)+a;const k=p.by||"(sin indicar)";bySeller[k]=(bySeller[k]||0)+a;}}
+ return{exp,got,pend:exp-got,by,bySeller,n};}
+
+function renderAdmin(){
+ const T=totals();
+ const tabs=[["puestos","Puestos"],["pendientes","Pendientes"],["ventas","Ventas"],["resumen","Resumen"],["config","Ajustes"]];
+ let body="";
+ if(tab==="puestos")body=`${legend}<div class="card adm">${gridHTML(status,true)}</div>${sel?editor(sel):'<p class="mut">Toca un puesto para registrar venta y pagos.</p>'}`;
+ if(tab==="pendientes")body=pendientes();
+ if(tab==="ventas")body=ventas();
+ if(tab==="resumen")body=resumen(T);
+ if(tab==="config")body=config();
+ $("#app").innerHTML=`<h1>Administración</h1>
+ <div class="row"><a href="index.html"><button>Ver vista pública</button></a><button id="out">Salir</button></div><p class="mut">Los cambios se publican solos en la página pública.</p>
+ <div class="tabs">${tabs.map(([k,v])=>`<button data-t="${k}" class="${tab===k?"on":""}">${v}</button>`).join("")}</div>${body}`;
+ $("#out").onclick=()=>firebase.auth().signOut();
+ document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{tab=b.dataset.t;render();});
+ document.querySelectorAll("[data-n]").forEach(b=>b.onclick=()=>{sel=Number(b.dataset.n);render();});
+ bindAdmin();
+}
+
+function editor(n){const r=rows[n]||{};const paid=paidOf(r),pr=priceOf(r);
+ return`<div class="card"><h2>Puesto ${n} <span class="tag ${status(n)==="paid"?"ok":""}">${label[status(n)]}</span></h2>
+ <div class="row"><input id="buyer" placeholder="Comprador" value="${esc(r.buyer)}"><input id="phone" placeholder="Teléfono" value="${esc(r.phone)}"></div>
+ <div class="row"><input id="seller" list="sl" placeholder="Vendedor" value="${esc(r.seller)}"><datalist id="sl">${cfg.sellers.map(s=>`<option value="${esc(s)}">`).join("")}</datalist>
+ <input id="price" type="number" placeholder="Precio" value="${pr}"><input id="sdate" type="date" value="${esc(r.saleDate||today())}"></div>
+ <div class="row"><button class="pri" id="saveSale">Guardar venta</button>${r.buyer?'<button class="dng" id="delSale">Liberar puesto</button>':""}</div>
+ ${r.buyer?`<h2>Pagos — abonado ${money(paid)} de ${money(pr)} (debe ${money(pr-paid)})</h2>
+ <div class="sc"><table><tr><th>Fecha</th><th>Monto</th><th>Modo</th><th>Recibió</th><th></th></tr>
+ ${(r.payments||[]).map(p=>`<tr><td>${esc(p.date)}</td><td>${money(p.amount)}</td><td>${esc(p.method)}</td><td>${esc(p.by)}</td><td><button class="dng" data-dp="${p.id}">✕</button></td></tr>`).join("")||'<tr><td colspan="5" class="mut">Sin pagos</td></tr>'}</table></div>
+ <div class="row"><input id="pa" type="number" placeholder="Monto"><select id="pm">${METHODS.map(m=>`<option>${m}</option>`).join("")}</select>
+ <input id="pb" list="sl" placeholder="Recibió (vendedor / banco)" value="${esc(r.seller)}"><input id="pd" type="date" value="${today()}"><button class="pri" id="addPay">Registrar pago</button></div>`:""}</div>`;}
+
+function pendientes(){const l=Object.values(rows).filter(r=>r.buyer&&paidOf(r)<priceOf(r)).sort((a,b)=>a.n-b.n);
+ return`<div class="card"><div class="row"><button id="csvPend">Descargar CSV</button></div><div class="sc"><table><tr><th>Puesto</th><th>Comprador</th><th>Teléfono</th><th>Vendedor</th><th>Precio</th><th>Abonado</th><th>Debe</th></tr>
+ ${l.map(r=>`<tr><td>${r.n}</td><td>${esc(r.buyer)}</td><td>${esc(r.phone)}</td><td>${esc(r.seller)}</td><td>${money(priceOf(r))}</td><td>${money(paidOf(r))}</td><td><b>${money(priceOf(r)-paidOf(r))}</b></td></tr>`).join("")||'<tr><td colspan="7" class="mut">Nada pendiente 🎉</td></tr>'}</table></div></div>`;}
+
+function ventas(){const l=Object.values(rows).filter(r=>r.buyer).sort((a,b)=>(a.saleDate||"").localeCompare(b.saleDate||"")||a.n-b.n);
+ const byDay={};l.forEach(r=>{const d=r.saleDate||"—";(byDay[d]=byDay[d]||{q:0,v:0}).q++;byDay[d].v+=priceOf(r);});
+ return`<div class="card"><h2>Ventas por fecha</h2><div class="sc"><table><tr><th>Fecha</th><th>Puestos vendidos</th><th>Valor</th></tr>
+ ${Object.entries(byDay).map(([d,x])=>`<tr><td>${d}</td><td>${x.q}</td><td>${money(x.v)}</td></tr>`).join("")||'<tr><td colspan="3" class="mut">Sin ventas</td></tr>'}</table></div></div>
+ <div class="card"><div class="row"><button id="csvSales">Descargar CSV completo</button></div><div class="sc"><table><tr><th>Fecha</th><th>Puesto</th><th>Comprador</th><th>Vendedor</th><th>Precio</th><th>Abonado</th><th>Estado</th></tr>
+ ${l.map(r=>`<tr><td>${esc(r.saleDate)}</td><td>${r.n}</td><td>${esc(r.buyer)}</td><td>${esc(r.seller)}</td><td>${money(priceOf(r))}</td><td>${money(paidOf(r))}</td><td>${paidOf(r)>=priceOf(r)?"Pagado":"Pendiente"}</td></tr>`).join("")}</table></div></div>`;}
+
+function resumen(T){const tb=o=>Object.entries(o).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${money(v)}</td></tr>`).join("")||'<tr><td class="mut">—</td></tr>';
+ return`<div class="kp"><div><b>${T.n}</b>Puestos vendidos</div><div><b>${money(T.exp)}</b>Debería haber (total vendido)</div><div><b>${money(T.got)}</b>Ya pagado</div><div><b>${money(T.pend)}</b>Pendiente por pagar</div></div>
+ <div class="card"><h2>Recaudado por modo de pago</h2><table>${tb(T.by)}</table></div>
+ <div class="card"><h2>Recaudado por quién recibió</h2><table>${tb(T.bySeller)}</table></div>
+ <div class="card"><button id="csvPay">Descargar detalle de pagos (CSV)</button></div>`;}
+
+function config(){return`<div class="card"><div class="row"><input id="ctitle" value="${esc(cfg.title)}" placeholder="Título"><input id="ctotal" type="number" value="${cfg.total}" placeholder="Nº de puestos"><input id="cprice" type="number" value="${cfg.price}" placeholder="Precio por puesto"></div>
+ <div class="row"><input id="csell" value="${esc(cfg.sellers.join(", "))}" placeholder="Vendedores separados por coma"></div><button class="pri" id="saveCfg">Guardar ajustes</button></div>`;}
+
+// ---------- acciones ----------
+const num=id=>Number($(id).value||0);
+function bindAdmin(){
+ const on=(id,f)=>{const e=$(id);if(e)e.onclick=f;};
+ on("#saveSale",async()=>{const old=rows[sel]||{};const b=$("#buyer").value.trim();if(!b)return alert("Falta el comprador");
+  await db.collection("puestos").doc(String(sel)).set({n:sel,buyer:b,phone:$("#phone").value.trim(),seller:$("#seller").value.trim(),price:num("#price"),saleDate:$("#sdate").value||today(),payments:old.payments||[]});});
+ on("#delSale",async()=>{if(confirm("¿Liberar el puesto? Se borran también sus pagos."))await db.collection("puestos").doc(String(sel)).delete();});
+ on("#addPay",async()=>{const a=num("#pa");if(a<=0)return alert("Monto inválido");const r=rows[sel];
+  const pays=[...(r.payments||[]),{id:Date.now().toString(36),date:$("#pd").value||today(),amount:a,method:$("#pm").value,by:$("#pb").value.trim()}];
+  await db.collection("puestos").doc(String(sel)).set({...r,payments:pays});});
+ document.querySelectorAll("[data-dp]").forEach(b=>b.onclick=async()=>{const r=rows[sel];await db.collection("puestos").doc(String(sel)).set({...r,payments:r.payments.filter(p=>p.id!==b.dataset.dp)});});
+ on("#saveCfg",async()=>{cfg={title:$("#ctitle").value,total:Math.max(1,num("#ctotal")),price:num("#cprice"),sellers:$("#csell").value.split(",").map(s=>s.trim()).filter(Boolean)};
+  await db.collection("config").doc("main").set(cfg);});
+ on("#csvPend",()=>csv("pendientes.csv",[["Puesto","Comprador","Telefono","Vendedor","Precio","Abonado","Debe"],...Object.values(rows).filter(r=>r.buyer&&paidOf(r)<priceOf(r)).map(r=>[r.n,r.buyer,r.phone,r.seller,priceOf(r),paidOf(r),priceOf(r)-paidOf(r)])]));
+ on("#csvSales",()=>csv("ventas.csv",[["Fecha","Puesto","Comprador","Telefono","Vendedor","Precio","Abonado","Debe","Estado"],...Object.values(rows).filter(r=>r.buyer).sort((a,b)=>(a.saleDate||"").localeCompare(b.saleDate||"")).map(r=>[r.saleDate,r.n,r.buyer,r.phone,r.seller,priceOf(r),paidOf(r),priceOf(r)-paidOf(r),paidOf(r)>=priceOf(r)?"Pagado":"Pendiente"])]));
+ on("#csvPay",()=>csv("pagos.csv",[["Puesto","Comprador","Fecha pago","Monto","Modo","Recibio"],...Object.values(rows).flatMap(r=>(r.payments||[]).map(p=>[r.n,r.buyer,p.date,p.amount,p.method,p.by]))]));
+}
+async function csv(name,data){const t="\ufeff"+data.map(r=>r.map(v=>`"${String(v??"").replace(/"/g,'""')}"`).join(",")).join("\n");
+ const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([t],{type:"text/csv"}));a.download=name;a.click();}
+
+
+const auth=firebase.auth();let unsubs=[],ready={c:false,p:false},last="";
+function login(){$("#app").innerHTML=`<h1>Acceso administración</h1><div class="card"><div class="row"><input id="em" type="email" placeholder="Correo"><input id="pw" type="password" placeholder="Contraseña"></div><button class="pri" id="go">Entrar</button> <span id="er" class="mut"></span></div>`;
+ $("#go").onclick=()=>auth.signInWithEmailAndPassword($("#em").value,$("#pw").value).catch(()=>$("#er").textContent="Datos incorrectos");}
+function sync(){if(!ready.c||!ready.p)return;const statuses={};for(let n=1;n<=cfg.total;n++){const s=status(n);if(s!=="free")statuses[n]=s;}
+ const p={title:cfg.title,total:cfg.total,statuses,updated:new Date().toLocaleString("es-CO")};const k=JSON.stringify([p.title,p.total,p.statuses]);
+ if(k===last)return;last=k;db.collection("publico").doc("estado").set(p).catch(()=>{});}
+auth.onAuthStateChanged(u=>{unsubs.forEach(f=>f());unsubs=[];ready={c:false,p:false};if(!u){login();return;}
+ view="admin";render();
+ unsubs.push(db.collection("config").doc("main").onSnapshot(x=>{if(x.exists)cfg={...cfg,...x.data()};ready.c=true;render();sync();}));
+ unsubs.push(db.collection("puestos").onSnapshot(q=>{rows={};q.docs.forEach(d=>rows[d.id]=d.data());ready.p=true;render();sync();}));});
+</script></body></html>
